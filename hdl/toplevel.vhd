@@ -152,6 +152,7 @@ architecture Behavioral of toplevel is
   constant kNumGtx      : integer:= 1;
 
   signal sitcp_reset  : std_logic;
+  signal raw_pwr_on_reset : std_logic;
   signal pwr_on_reset : std_logic;
   signal system_reset : std_logic;
   signal user_reset   : std_logic;
@@ -164,6 +165,8 @@ architecture Behavioral of toplevel is
   signal rst_from_bus : std_logic;
 
   signal delayed_usr_rstb : std_logic;
+
+  signal module_ready     : std_logic;
 
   signal sync_nim_in      : std_logic_vector(NIM_IN'range);
   signal tmp_nim_out      : std_logic_vector(NIM_OUT'range);
@@ -294,6 +297,9 @@ architecture Behavioral of toplevel is
   attribute mark_debug of serdes_offset      : signal is kEnDebugTop;
   attribute mark_debug of laccp_fine_offset  : signal is kEnDebugTop;
   attribute mark_debug of local_fine_offset  : signal is kEnDebugTop;
+
+  -- Mikumari Util ------------------------------------------------------------
+  signal cbt_init_from_mutil   : MikuScalarPort;
 
   -- SCR ----------------------------------------------------------------------------------
   constant kMsbScr      : integer:= kNumSysInput+kNumInput-1;
@@ -585,8 +591,10 @@ begin
   c6c_reset       <= '1';
   mmcm_cdcm_reset <= (not delayed_usr_rstb);
 
-  system_reset    <= (not clk_miku_locked) or (not USR_RSTB);
-  pwr_on_reset    <= (not clk_sys_locked) or (not USR_RSTB);
+  system_reset      <= (not clk_miku_locked) or (not USR_RSTB);
+  raw_pwr_on_reset  <= (not clk_sys_locked) or (not USR_RSTB);
+  u_KeepPwrOnRst : entity mylib.RstDelayTimer
+    port map(raw_pwr_on_reset, X"1FFFFFFF", clk_slow, module_ready, pwr_on_reset);
 
   user_reset      <= system_reset or rst_from_bus or emergency_reset(0);
   bct_reset       <= system_reset or emergency_reset(0);
@@ -638,20 +646,8 @@ begin
   miku_rxp(kIdMikuSec)  <= MIKUMARI_RXP;
   miku_rxn(kIdMikuSec)  <= MIKUMARI_RXN;
 
-  u_KeepInit : process(system_reset, clk_slow)
-    variable counter   : integer:= 0;
-  begin
-    if(system_reset = '1') then
-      power_on_init   <= '1';
-      counter         := 16#0FFFFFFF#;
-    elsif(clk_slow'event and clk_slow = '1') then
-      if(counter = 0) then
-        power_on_init   <= '0';
-      else
-        counter   := counter -1;
-      end if;
-    end if;
-  end process;
+  u_KeepInit : entity mylib.RstDelayTimer
+    port map(system_reset, X"0FFFFFFF", clk_slow, open, power_on_init );
 
   gen_mikumari : for i in 0 to kNumMikumari-1 generate
     laccp_reset(i) <= system_reset or (not mikumari_link_up(i));
@@ -694,7 +690,7 @@ begin
         clkPar        => clk_slow,
         clkIndep      => clk_gbe,
         clkIdctrl     => clk_gbe,
-        initIn        => power_on_init,
+        initIn        => power_on_init or cbt_init_from_mutil(i),
 
         TXP           => MIKUMARI_TXP,
         TXN           => MIKUMARI_TXN,
@@ -891,7 +887,7 @@ begin
       cbtLaneUp           => cbt_lane_up,
       tapValueIn          => tap_value_out,
       bitslipNumIn        => bitslip_num_out,
-      cbtInitOut          => open,
+      cbtInitOut          => cbt_init_from_mutil,
       tapValueOut         => open,
 
       -- MIKUMARI Link ports --
@@ -1147,6 +1143,7 @@ begin
       hbCount             => (heartbeat_count'range => heartbeat_count, others => '0'),
       hbfNum              => (hbf_number'range => hbf_number, others => '0'),
       scrEnIn             => scr_en_in,
+      scrRstOut           => open,
 
       -- Local bus --
       addrLocalBus        => addr_LocalBus,
@@ -1286,7 +1283,8 @@ begin
 
 
   -- SiTCP Inst ------------------------------------------------------------------------
-  u_SiTCPRst : entity mylib.ResetGen port map(system_reset or (not mmcm_locked), clk_sys, sitcp_reset);
+  u_SiTCPRst : entity mylib.ResetGen
+    port map(pwr_on_reset or (not mmcm_locked), clk_sys, sitcp_reset);
 
   gen_SiTCP : for i in 0 to kNumGtx-1 generate
 
@@ -1395,11 +1393,13 @@ begin
   end generate;
 
   -- SFP transceiver -------------------------------------------------------------------
-  u_MiiRstTimer_Inst : entity mylib.MiiRstTimer
+  u_MiiRstTimer_Inst : entity mylib.RstDelayTimer
     port map(
-      rst         => (system_reset or sitcp_reset or emergency_reset(0)),
+      rstIn       => (pwr_on_reset or sitcp_reset or emergency_reset(0)),
+      preSetVal   => X"00FFFFFF",
       clk         => clk_sys,
-      rstMiiOut   => mii_reset
+      readyOut    => open,
+      delayRstOut => mii_reset
     );
 
   u_MiiInit_Inst : mii_initializer
@@ -1506,7 +1506,7 @@ begin
         -- General IO's
         ---------------
         status_vector        => open,
-        reset                => system_reset
+        reset                => pwr_on_reset
         );
   end generate;
 
