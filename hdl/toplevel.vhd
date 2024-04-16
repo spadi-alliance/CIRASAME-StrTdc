@@ -299,7 +299,8 @@ architecture Behavioral of toplevel is
   attribute mark_debug of local_fine_offset  : signal is kEnDebugTop;
 
   -- Mikumari Util ------------------------------------------------------------
-  signal cbt_init_from_mutil   : MikuScalarPort;
+  signal cbt_init_from_mutil    : MikuScalarPort;
+  signal rst_from_miku          : std_logic;
 
   -- SCR ----------------------------------------------------------------------------------
   constant kMsbScr      : integer:= kNumSysInput+kNumInput-1;
@@ -596,11 +597,12 @@ begin
   u_KeepPwrOnRst : entity mylib.RstDelayTimer
     port map(raw_pwr_on_reset, X"1FFFFFFF", clk_slow, module_ready, pwr_on_reset);
 
-  user_reset      <= system_reset or rst_from_bus or emergency_reset(0);
-  bct_reset       <= system_reset or emergency_reset(0);
+  u_RstFromMiku : entity mylib.SigStretcher
+    generic map(kLength => 8)
+    port map(clk_slow, laccp_pulse_out(kDownPulseSysRst), rst_from_miku);
 
-  user_reset      <= system_reset or rst_from_bus or emergency_reset(0);
-  bct_reset       <= system_reset or emergency_reset(0);
+  user_reset      <= system_reset or rst_from_bus or rst_from_miku;
+  bct_reset       <= system_reset or rst_from_miku;
 
   -- NIM_IO --
   u_sync_nimin  : entity mylib.synchronizer port map(clk_slow, NIM_IN(2), sync_nim_in(2));
@@ -889,6 +891,7 @@ begin
       bitslipNumIn        => bitslip_num_out,
       cbtInitOut          => cbt_init_from_mutil,
       tapValueOut         => open,
+      rstOverMikuOut      => open,
 
       -- MIKUMARI Link ports --
       mikuLinkUp          => mikumari_link_up,
@@ -1284,7 +1287,7 @@ begin
 
   -- SiTCP Inst ------------------------------------------------------------------------
   u_SiTCPRst : entity mylib.ResetGen
-    port map(pwr_on_reset or (not mmcm_locked), clk_sys, sitcp_reset);
+    port map(pwr_on_reset or (not mmcm_locked) or rst_from_miku, clk_sys, sitcp_reset);
 
   gen_SiTCP : for i in 0 to kNumGtx-1 generate
 
