@@ -921,7 +921,7 @@ begin
     generic map(
       kTdcType        => "LRTDC",
       kNumInput       => kNumInput,
-      kDivisionRatio  => 4,
+      kDivisionRatio  => 8,
       enDEBUG         => false
     )
     port map(
