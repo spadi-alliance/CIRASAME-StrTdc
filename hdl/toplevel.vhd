@@ -593,9 +593,9 @@ begin
   mmcm_cdcm_reset <= (not delayed_usr_rstb);
 
   system_reset      <= (not clk_miku_locked) or (not USR_RSTB);
-  raw_pwr_on_reset  <= (not clk_sys_locked) or (not USR_RSTB);
+  raw_pwr_on_reset  <= (not clk_sys_locked);-- or (not USR_RSTB);
   u_KeepPwrOnRst : entity mylib.RstDelayTimer
-    port map(raw_pwr_on_reset, X"1FFFFFFF", clk_slow, module_ready, pwr_on_reset);
+    port map(raw_pwr_on_reset, X"0FFFFFFF", clk_sys, module_ready, pwr_on_reset);
 
   u_RstFromMiku : entity mylib.SigStretcher
     generic map(kLength => 8)
@@ -1130,6 +1130,8 @@ begin
   scr_en_in(kMsbScr - kIndexHbfThrotTime)   <= scr_thr_on(4);
   scr_en_in(kMsbScr - kIndexMikuError)      <= (pattern_error(kIdMikuSec) or checksum_err(kIdMikuSec) or frame_broken(kIdMikuSec) or recv_terminated(kIdMikuSec)) and is_ready_for_daq(kIdMikuSec);
 
+  scr_en_in(kMsbScr - kIndexTrgReq)         <= '0';
+  scr_en_in(kMsbScr - kIndexTrgRejected)    <= '0';
   scr_en_in(kNumInput-1 downto 0)           <= swap_vect(hit_out);
 
   u_SCR_Inst : entity mylib.FreeRunScaler
@@ -1297,7 +1299,7 @@ begin
       port map
       (
         CLK               => clk_sys, --: System Clock >129MHz
-        RST               => (sitcp_reset or system_reset), --: System reset
+        RST               => (sitcp_reset), --: System reset
         -- Configuration parameters
         FORCE_DEFAULTn    => dip_sw(kSiTCP.Index), --: Load default parameters
         EXT_IP_ADDR       => X"00000000", --: IP address[31:0]
@@ -1396,13 +1398,11 @@ begin
   end generate;
 
   -- SFP transceiver -------------------------------------------------------------------
-  u_MiiRstTimer_Inst : entity mylib.RstDelayTimer
+  u_MiiRstTimer_Inst : entity mylib.MiiRstTimer
     port map(
-      rstIn       => (pwr_on_reset or sitcp_reset or emergency_reset(0)),
-      preSetVal   => X"00FFFFFF",
+      rst         => emergency_reset(0),
       clk         => clk_sys,
-      readyOut    => open,
-      delayRstOut => mii_reset
+      rstMiiOut   => mii_reset
     );
 
   u_MiiInit_Inst : mii_initializer
@@ -1443,7 +1443,7 @@ begin
       rxuserClk2    => rxuser_clk2,
 
       -- GTXE_COMMON --
-      reset         => system_reset,
+      reset         => pwr_on_reset,
       clkIndep      => clk_gbe,
       clkQPLL       => gt0_qplloutclk,
       refclkQPLL    => gt0_qplloutrefclk
