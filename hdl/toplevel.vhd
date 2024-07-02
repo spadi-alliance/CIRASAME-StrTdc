@@ -482,6 +482,9 @@ architecture Behavioral of toplevel is
   end component;
 
   -- SFP transceiver -----------------------------------------------------------------------
+  constant kPcsPmaLinkStatus  : integer:= 0;
+  signal pcs_pma_status       : std_logic_vector(15 downto 0);
+
   constant kMiiPhyad      : std_logic_vector(kWidthPhyAddr-1 downto 0):= "00000";
   signal mii_init_mdc, mii_init_mdio : std_logic;
 
@@ -1289,7 +1292,7 @@ begin
 
   -- SiTCP Inst ------------------------------------------------------------------------
   u_SiTCPRst : entity mylib.ResetGen
-    port map(pwr_on_reset or (not mmcm_locked) or rst_from_miku, clk_sys, sitcp_reset);
+    port map(pwr_on_reset or (not pcs_pma_status(kPcsPmaLinkStatus)) or rst_from_miku, clk_sys, sitcp_reset);
 
   gen_SiTCP : for i in 0 to kNumGtx-1 generate
 
@@ -1508,7 +1511,7 @@ begin
 
         -- General IO's
         ---------------
-        status_vector        => open,
+        status_vector        => pcs_pma_status,
         reset                => pwr_on_reset
         );
   end generate;
