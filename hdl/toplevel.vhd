@@ -171,6 +171,9 @@ architecture Behavioral of toplevel is
   signal sync_nim_in      : std_logic_vector(NIM_IN'range);
   signal tmp_nim_out      : std_logic_vector(NIM_OUT'range);
 
+  signal local_frame_flag : std_logic_vector(kWidthFrameFlag-1 downto 0);
+  signal frame_flag_out   : std_logic_vector(kWidthFrameFlag-1 downto 0);
+
   -- Hit Input definition --
   constant kNumInput    : integer:= 128;
 
@@ -307,6 +310,7 @@ architecture Behavioral of toplevel is
   signal trigb_ibuf_out : std_logic_vector(kNumInput-1 downto 0);
   signal hit_out        : std_logic_vector(kNumInput-1 downto 0);
   signal scr_en_in      : std_logic_vector(kMsbScr downto 0);
+  signal scr_gate       : std_logic_vector(kNumScrGate-1 downto 0);
 
   -- Streaming TDC ------------------------------------------------------------
   -- scaler --
@@ -608,7 +612,11 @@ begin
   bct_reset       <= system_reset or rst_from_miku;
 
   -- NIM_IO --
-  u_sync_nimin  : entity mylib.synchronizer port map(clk_slow, NIM_IN(2), sync_nim_in(2));
+  u_sync_nimin1  : entity mylib.synchronizer port map(clk_slow, NIM_IN(1), sync_nim_in(1));
+  u_sync_nimin2  : entity mylib.synchronizer port map(clk_slow, NIM_IN(2), sync_nim_in(2));
+
+  local_frame_flag(0)   <= sync_nim_in(1);
+  local_frame_flag(1)   <= '0';
 
   NIM_OUT(1)  <= tmp_nim_out(1);
   u_nimo_buf : process(clk_slow)
@@ -869,6 +877,9 @@ begin
         forceOn           => '1',
         frameState        => hbf_state,
 
+        hbfFlagsIn        => local_frame_flag,
+        frameFlags        => frame_flag_out,
+
         -- LACCP Bus --
         dataBusIn         => data_laccp_intra_out(GetExtIntraIndex(kPortHBU)),
         validBusIn        => valid_laccp_intra_out(GetExtIntraIndex(kPortHBU)),
@@ -881,12 +892,15 @@ begin
   -- MIKUMARI utility ---------------------------------------------------------------------
   u_MUTIL : entity mylib.MikumariUtil
     generic map(
-      kNumMikumari => kNumMikumari
+      kNumMikumari => kNumMikumari,
+      kSecondaryId => kIdMikuSec
     )
     port map(
       -- System ----------------------------------------------------
       rst               => user_reset,
       clk               => clk_slow,
+
+      clockRootMode     => DIP(kStandAlone.Index),
 
       -- CBT status ports --
       cbtLaneUp           => cbt_lane_up,
@@ -918,7 +932,7 @@ begin
 
   -- Streaming LR-TDC ---------------------------------------------------------------------
   signal_in_merge   <= CI_TRIGB;
-  strtdc_trigger_in <= laccp_pulse_out(kDownPulseTrigger) or sync_nim_in(2);
+  strtdc_trigger_in <= laccp_pulse_out(kDownPulseTrigger) or (dip_sw(kStandAlone.Index) and sync_nim_in(2));
 
   u_SLT_Inst: entity mylib.StrLrTdc
     generic map(
@@ -948,6 +962,8 @@ begin
       hbfState          => hbf_state,
 
       LaccpFineOffset   => laccp_fine_offset,
+
+      frameFlagsIn      => frame_flag_out,
 
       -- Streaming TDC interface ------------------------------------
       sigIn             => signal_in_merge,
@@ -1135,7 +1151,24 @@ begin
 
   scr_en_in(kMsbScr - kIndexTrgReq)         <= '0';
   scr_en_in(kMsbScr - kIndexTrgRejected)    <= '0';
+
+  scr_en_in(kMsbScr - kIndexGate1Time)      <= heartbeat_signal and scr_gate(1);
+  scr_en_in(kMsbScr - kIndexGate2Time)      <= heartbeat_signal and scr_gate(2);
+
   scr_en_in(kNumInput-1 downto 0)           <= swap_vect(hit_out);
+
+  scr_gate(0)   <= '1';
+  process(clk_slow)
+  begin
+    if(clk_slow'event and clk_slow = '1') then
+      if(user_reset = '1') then
+        scr_gate(kNumScrGate-1 downto 1)  <= (others => '0');
+      elsif(heartbeat_signal = '1') then
+        scr_gate(1)   <= frame_flag_out(0);
+        scr_gate(2)   <= frame_flag_out(1);
+      end if;
+    end if;
+  end process;
 
   u_SCR_Inst : entity mylib.FreeRunScaler
     generic map(
@@ -1152,6 +1185,8 @@ begin
       hbfNum              => (hbf_number'range => hbf_number, others => '0'),
       scrEnIn             => scr_en_in,
       scrRstOut           => open,
+
+      scrgates            => scr_gate,
 
       -- Local bus --
       addrLocalBus        => addr_LocalBus,
